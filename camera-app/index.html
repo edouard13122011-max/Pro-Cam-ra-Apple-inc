@@ -238,6 +238,9 @@
       <div class="row"><label>Amélioration</label>
         <select id="enhanceSelect"><option value="off">Désactivé</option><option value="auto" selected>Auto</option><option value="max">Max détail IA</option></select>
       </div>
+      <div class="row"><label>Mode nuit</label>
+        <select id="nightSelect"><option value="off">Désactivé</option><option value="on">Activé (longue pose)</option></select>
+      </div>
       <div class="row"><label>Format</label>
         <select id="photoFormat"><option value="image/jpeg">JPEG</option><option value="image/png">PNG (RAW)</option></select>
       </div>
@@ -313,6 +316,7 @@ const stage = document.getElementById('stage');
 let stream=null, facing='environment', mode='photo';
 let recording=false, recorder=null, chunks=[], recStart=0, recTimer=null;
 let items=[], torchOn=false, selectedZoom=1, capabilities={};
+let nightMode=false;
 let targetFps=60, rafId=null, stabOn=true, horizonOn=true;
 let horizonAngle=0, accX=0, accY=0, stabX=0, stabY=0;
 let pinchStart=null, sliderHideTimer=null, lastShutter=0;
@@ -333,20 +337,17 @@ async function requestMotionPermission(){
 }
 const ROT_CLIP=32;
 window.addEventListener('deviceorientation', e=>{
-  // angle de roulis depuis gamma (standard, fiable sur iOS après permission)
-  let roll = e.gamma || 0;
+  let roll = (e.gamma !== null && e.gamma !== undefined) ? e.gamma : (Math.atan2(accX, accY) * 180 / Math.PI);
   const so = (screen.orientation && screen.orientation.type) || '';
-  if (so.includes('landscape')) roll = e.beta || 0;
-  // zone morte
-  if (Math.abs(roll) < 2.0) roll = 0;
-  // déroulement pour éviter le saut à ±180°
+  if (so.includes('landscape')) roll = (e.beta !== null && e.beta !== undefined) ? e.beta : roll;
+  if (Math.abs(roll) < 1.5) roll = 0;
   let rr = roll;
   while (rr - horizonAngle > 180) rr -= 360;
   while (rr - horizonAngle < -180) rr += 360;
-  horizonAngle += (rr - horizonAngle) * 0.12;
+  horizonAngle += (rr - horizonAngle) * 0.30;
   levelDot.style.left = (50 + Math.max(-30, Math.min(30, horizonAngle))) + '%';
   const now = Date.now();
-  if (!window._lastPT || now - window._lastPT > 50) { window._lastPT = now; updatePreviewTransform(); }
+  if (!window._lastPT || now - window._lastPT > 30) { window._lastPT = now; updatePreviewTransform(); }
 },{passive:true});
 window.addEventListener('devicemotion', e=>{
   const a = e.accelerationIncludingGravity || {};
@@ -543,14 +544,24 @@ async function averageFrames(n){
   canvas.getContext('2d',{alpha:false}).putImageData(new ImageData(out,w,h),0,0);
   return canvas;
 }
-function sharpenCanvas(canvas,amount){
+function sharpenCanvas(canvas,amount,radius){
   const ctx=canvas.getContext('2d'); const w=canvas.width,h=canvas.height;
-  if(w*h>24000000) return;
-  const a=amount==null?0.55:Math.max(0.2,Math.min(1.2,amount));
+  if(w*h>30000000) return;
+  const a=amount==null?0.55:Math.max(0.2,Math.min(1.5,amount));
+  const r=radius||1;
   const img=ctx.getImageData(0,0,w,h); const data=img.data; const copy=new Uint8ClampedArray(data);
-  const k=[0,-a,0,-a,1+4*a,-a,0,-a,0];
-  for(let y=1;y<h-1;y++) for(let x=1;x<w-1;x++){
-    for(let c=0;c<3;c++){ let v=0; for(let ky=-1;ky<=1;ky++) for(let kx=-1;kx<=1;kx++) v+=copy[((y+ky)*w+(x+kx))*4+c]*k[(ky+1)*3+(kx+1)]; const i=(y*w+x)*4+c; data[i]=Math.max(0,Math.min(255,v)); }
+  // unsharp mask 3x3 (ou 5x5 si radius>1)
+  if(r<=1){
+    const k=[0,-a,0,-a,1+4*a,-a,0,-a,0];
+    for(let y=1;y<h-1;y++) for(let x=1;x<w-1;x++){
+      for(let c=0;c<3;c++){ let v=0; for(let ky=-1;ky<=1;ky++) for(let kx=-1;kx<=1;kx++) v+=copy[((y+ky)*w+(x+kx))*4+c]*k[(ky+1)*3+(kx+1)]; const i=(y*w+x)*4+c; data[i]=Math.max(0,Math.min(255,v)); }
+    }
+  } else {
+    // 5x5 unsharp mask (plus de détail)
+    const k5=[0,0,-a,0,0, 0,0,-a,0,0, -a,-a,1+8*a,-a,-a, 0,0,-a,0,0, 0,0,-a,0,0];
+    for(let y=2;y<h-2;y++) for(let x=2;x<w-2;x++){
+      for(let c=0;c<3;c++){ let v=0; for(let ky=-2;ky<=2;ky++) for(let kx=-2;kx<=2;kx++) v+=copy[((y+ky)*w+(x+kx))*4+c]*k5[(ky+2)*5+(kx+2)]; const i=(y*w+x)*4+c; data[i]=Math.max(0,Math.min(255,v)); }
+    }
   }
   ctx.putImageData(img,0,0);
 }
@@ -591,8 +602,9 @@ async function capturePhoto(){
   const mpSel=document.getElementById('photoMpSelect').value;
   const format = (mpSel==='48raw') ? 'image/png' : document.getElementById('photoFormat').value;
   const quality=+document.getElementById('quality').value;
+  const nightMode = document.getElementById('nightSelect').value==='on';
   const fAperture=+document.getElementById('aperture').value;
-  const base=await averageFrames(enhance==='max'||selectedZoom>5?5:3);
+  const base=await averageFrames(nightMode?20:(enhance==='max'||selectedZoom>10?7:(selectedZoom>5?5:3)));
   const videoW=base.width, videoH=base.height;
   const A=Math.min(2.4,Math.max(0.42,(stage.clientWidth||9)/(stage.clientHeight||19.5)));
   const mpSel2=document.getElementById('photoMpSelect').value;
@@ -622,11 +634,13 @@ async function capturePhoto(){
   let filter='none';
   if(enhance==='auto') filter='contrast(1.06) saturate(1.12)';
   if(enhance==='max') filter='contrast(1.12) saturate(1.18) brightness(1.02)';
+  if(nightMode) filter='contrast(1.15) saturate(1.1) brightness(1.35)';
   ctx.filter=filter;
   drawScaledProgressive(ctx,raw,0,0,raw.width,raw.height,-outW/2,-outH/2,outW,outH);
   ctx.filter='none'; ctx.restore();
-  const sharpAmt=enhance==='max'?(selectedZoom>10?1.0:(selectedZoom>3?0.9:0.65)):(selectedZoom>10?0.85:(selectedZoom>3?0.6:0.4));
-  if(enhance!=='off' || selectedZoom>2) sharpenCanvas(canvas,sharpAmt);
+  const sharpAmt=nightMode?0.7:(enhance==='max'?(selectedZoom>10?1.2:(selectedZoom>3?0.9:0.65)):(selectedZoom>10?0.9:(selectedZoom>3?0.6:0.4)));
+  const sharpRad = selectedZoom>10 ? 2 : 1;
+  if(enhance!=='off' || selectedZoom>2) sharpenCanvas(canvas,sharpAmt,sharpRad);
   if(fAperture) applyBokeh(canvas,fAperture);
   const url=canvas.toDataURL(format,quality);
   addItem({type:'photo',url,meta:outW+'×'+outH+' '+selectedZoom.toFixed(1)+'x',mime:format});
@@ -853,9 +867,21 @@ const qMenuBtn=document.getElementById('qMenuBtn');
 const qPopover=document.getElementById('qPopover');
 function renderPopover(){
   const isVideo = mode==='video';
-  qPopover.innerHTML='';
+  // Build full HTML first (avoid innerHTML += destroying listeners)
+  let html='';
   if(isVideo){
-    qPopover.innerHTML += '<h5>Qualité vidéo</h5><div class="qRow" id="qResRow"></div>';
+    html += '<h5>Qualité vidéo</h5><div class="qRow" id="qResRow"></div>';
+    html += '<h5>Cadence</h5><div class="qRow" id="qFpsRow"></div>';
+  } else {
+    html += '<h5>Mégapixels</h5><div class="qRow" id="qMpRow"></div>';
+    html += '<h5>Amélioration</h5><div class="qRow" id="qEnhRow"></div>';
+    html += '<h5>Mode nuit</h5><div class="qRow" id="qNightRow"></div>';
+  }
+  html += '<h5>Ouverture</h5><div class="qRow" id="qAperRow"></div>';
+  html += '<h5>Horizon lock</h5><div class="qRow" id="qHorRow"></div>';
+  qPopover.innerHTML = html;
+  // Now attach listeners (after single innerHTML set)
+  if(isVideo){
     const resRow=qPopover.querySelector('#qResRow');
     [['3840x2160','4K'],['1920x1080','Full HD'],['1280x720','HD'],['640x480','720']].forEach(([v,l])=>{
       const b=document.createElement('button'); b.className='qOpt'; b.textContent=l;
@@ -863,7 +889,6 @@ function renderPopover(){
       b.addEventListener('click', ()=>{ document.getElementById('resSelect').value=v; resRow.querySelectorAll('.qOpt').forEach(x=>x.classList.remove('active')); b.classList.add('active'); if(stream) startCamera(); toast('Qualité '+l); });
       resRow.appendChild(b);
     });
-    qPopover.innerHTML += '<h5>Cadence</h5><div class="qRow" id="qFpsRow"></div>';
     const fpsRow=qPopover.querySelector('#qFpsRow');
     ['24','30'].forEach(v=>{
       const b=document.createElement('button'); b.className='qOpt'; b.textContent=v+' fps';
@@ -872,7 +897,6 @@ function renderPopover(){
       fpsRow.appendChild(b);
     });
   } else {
-    qPopover.innerHTML += '<h5>Mégapixels</h5><div class="qRow" id="qMpRow"></div>';
     const mpRow=qPopover.querySelector('#qMpRow');
     [['12','12 MP'],['24','24 MP'],['48','48 MP'],['48raw','48+ RAW']].forEach(([v,l])=>{
       const b=document.createElement('button'); b.className='qOpt'; b.textContent=l;
@@ -880,7 +904,6 @@ function renderPopover(){
       b.addEventListener('click', ()=>{ document.getElementById('photoMpSelect').value=v; mpRow.querySelectorAll('.qOpt').forEach(x=>x.classList.remove('active')); b.classList.add('active'); toast('Photo '+l); });
       mpRow.appendChild(b);
     });
-    qPopover.innerHTML += '<h5>Amélioration</h5><div class="qRow" id="qEnhRow"></div>';
     const enhRow=qPopover.querySelector('#qEnhRow');
     [['auto','Auto'],['max','Max IA'],['off','Off']].forEach(([v,l])=>{
       const b=document.createElement('button'); b.className='qOpt small'; b.textContent=l;
@@ -888,8 +911,14 @@ function renderPopover(){
       b.addEventListener('click', ()=>{ document.getElementById('enhanceSelect').value=v; enhRow.querySelectorAll('.qOpt').forEach(x=>x.classList.remove('active')); b.classList.add('active'); toast('Qualité '+(v==='max'?'MAX':(v==='auto'?'AUTO':'OFF'))); });
       enhRow.appendChild(b);
     });
+    const nightRow=qPopover.querySelector('#qNightRow');
+    ['off','on'].forEach(v=>{
+      const b=document.createElement('button'); b.className='qOpt'; b.textContent=v==='on'?'Nuit ON':'Nuit OFF';
+      b.classList.toggle('active', document.getElementById('nightSelect').value===v);
+      b.addEventListener('click', ()=>{ document.getElementById('nightSelect').value=v; nightRow.querySelectorAll('.qOpt').forEach(x=>x.classList.remove('active')); b.classList.add('active'); toast('Mode nuit '+(v==='on'?'activé':'désactivé')); });
+      nightRow.appendChild(b);
+    });
   }
-  qPopover.innerHTML += '<h5>Ouverture</h5><div class="qRow" id="qAperRow"></div>';
   const aperRow=qPopover.querySelector('#qAperRow');
   [1.8,2.2,3.4,4.4,6.6].forEach(v=>{
     const b=document.createElement('button'); b.className='qOpt small'; b.textContent='f/'+v;
@@ -897,7 +926,6 @@ function renderPopover(){
     b.addEventListener('click', ()=>{ document.getElementById('aperture').value=v; document.getElementById('apertureVal').textContent='f/'+v.toFixed(1); aperRow.querySelectorAll('.qOpt').forEach(x=>x.classList.remove('active')); b.classList.add('active'); });
     aperRow.appendChild(b);
   });
-  qPopover.innerHTML += '<h5>Horizon lock</h5><div class="qRow" id="qHorRow"></div>';
   const horRow=qPopover.querySelector('#qHorRow');
   const hb=document.createElement('button'); hb.className='qOpt'; hb.textContent=horizonOn?'Activé':'Désactivé';
   hb.classList.toggle('active',horizonOn);

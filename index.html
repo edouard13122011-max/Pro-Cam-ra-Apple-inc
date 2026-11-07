@@ -42,6 +42,15 @@
 
   .topBar { position:absolute; top:0; left:0; right:0; display:flex; align-items:center; gap:6px; padding-top:max(8px,env(safe-area-inset-top)); padding-left:12px; padding-right:12px; z-index:10; }
 
+  .qMenuBtn { position:absolute; top:calc(max(8px,env(safe-area-inset-top)) + 52px); left:50%; transform:translateX(-50%); z-index:9; background:rgba(20,20,24,.5); backdrop-filter:blur(24px) saturate(180%); border:1px solid rgba(255,255,255,.14); color:#fff; font-size:12px; font-weight:700; padding:8px 16px; border-radius:20px; cursor:pointer; letter-spacing:.3px; }
+  .qPopover { position:absolute; top:calc(max(8px,env(safe-area-inset-top)) + 92px); left:50%; transform:translateX(-50%); z-index:30; display:none; flex-direction:column; gap:8px; min-width:220px; background:rgba(20,20,24,.72); backdrop-filter:blur(30px) saturate(180%); border:1px solid rgba(255,255,255,.14); border-radius:20px; padding:12px; }
+  .qPopover.show { display:flex; }
+  .qPopover h5 { font-size:10px; text-transform:uppercase; letter-spacing:1.4px; color:#999; margin:4px 2px 6px; }
+  .qRow { display:flex; gap:6px; flex-wrap:wrap; }
+  .qOpt { background:rgba(255,255,255,.10); border:1px solid rgba(255,255,255,.14); color:#fff; font-size:12px; font-weight:700; padding:8px 12px; border-radius:14px; cursor:pointer; flex:1 1 auto; text-align:center; }
+  .qOpt.active { background:var(--yellow); color:#000; border-color:var(--yellow); }
+  .qOpt.small { font-size:11px; padding:6px 10px; }
+
   .startOverlay { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; background:rgba(0,0,0,.55); backdrop-filter:blur(10px); z-index:20; }
   .startOverlay button { background:rgba(255,255,255,.14); backdrop-filter:blur(20px); border:1px solid var(--stroke); color:#fff; padding:18px 34px; border-radius:26px; font-size:17px; font-weight:700; }
   .startOverlay small { color:#bbb; font-size:13px; max-width:270px; text-align:center; line-height:1.4; }
@@ -137,6 +146,10 @@
     </div>
   </div>
 
+  <!-- Accès rapide (style Apple transparent) -->
+  <button class="qMenuBtn" id="qMenuBtn">Réglages rapides</button>
+  <div class="qPopover" id="qPopover"></div>
+
   <div id="zoomStack">
     <div class="startOverlay" id="startOverlay">
       <button id="startOverlayBtn">Activer la caméra</button>
@@ -193,17 +206,23 @@
       <h4>Caméra</h4>
       <div class="row"><label>Résolution</label>
         <select id="resSelect">
-          <option value="640x480">480p</option>
           <option value="1280x720">720p</option>
           <option value="1920x1080" selected>1080p</option>
           <option value="2560x1440">1440p</option>
           <option value="3840x2160">4K</option>
         </select>
       </div>
+      <div class="row"><label>Mégapixels photo</label>
+        <select id="photoMpSelect">
+          <option value="12">12 MP</option>
+          <option value="24">24 MP</option>
+          <option value="48" selected>48 MP</option>
+          <option value="48raw">48 MP RAW (+détail)</option>
+        </select>
+      </div>
       <div class="row"><label>Images/sec</label>
         <select id="fpsSelect">
-          <option value="24">24</option><option value="30">30</option>
-          <option value="60" selected>60</option><option value="120">120</option>
+          <option value="24">24</option><option value="30" selected>30</option>
         </select>
       </div>
       <div class="row"><label>Zoom max</label>
@@ -310,25 +329,29 @@ async function requestMotionPermission(){
   try {
     if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') await DeviceOrientationEvent.requestPermission();
     if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') await DeviceMotionEvent.requestPermission();
-  } catch(e){}
+  } catch(e){ toast('Autorisez le mouvement pour l\'horizon lock'); }
 }
 const ROT_CLIP=32;
 window.addEventListener('deviceorientation', e=>{
-  let roll=e.gamma||0;
-  const so=(screen.orientation && screen.orientation.type)||'';
-  if (so.includes('landscape')) roll=e.beta||0;
-  if (Math.abs(roll)<2.0) roll=0;
-  roll=Math.max(-ROT_CLIP,Math.min(ROT_CLIP,roll));
-  horizonAngle += (roll-horizonAngle)*0.08;
-  levelDot.style.left=(50+Math.max(-30,Math.min(30,horizonAngle)))+'%';
-  // mise à jour throttlée pour éviter le jitter
-  const now=Date.now();
-  if(!window._lastPT || now-window._lastPT>60){ window._lastPT=now; updatePreviewTransform(); }
+  // angle de roulis depuis gamma (standard, fiable sur iOS après permission)
+  let roll = e.gamma || 0;
+  const so = (screen.orientation && screen.orientation.type) || '';
+  if (so.includes('landscape')) roll = e.beta || 0;
+  // zone morte
+  if (Math.abs(roll) < 2.0) roll = 0;
+  // déroulement pour éviter le saut à ±180°
+  let rr = roll;
+  while (rr - horizonAngle > 180) rr -= 360;
+  while (rr - horizonAngle < -180) rr += 360;
+  horizonAngle += (rr - horizonAngle) * 0.12;
+  levelDot.style.left = (50 + Math.max(-30, Math.min(30, horizonAngle))) + '%';
+  const now = Date.now();
+  if (!window._lastPT || now - window._lastPT > 50) { window._lastPT = now; updatePreviewTransform(); }
 },{passive:true});
 window.addEventListener('devicemotion', e=>{
-  const a=e.accelerationIncludingGravity||{};
-  accX += ((a.x||0)-accX)*0.08;
-  accY += ((a.y||0)-accY)*0.08;
+  const a = e.accelerationIncludingGravity || {};
+  accX += ((a.x||0) - accX) * 0.08;
+  accY += ((a.y||0) - accY) * 0.08;
 },{passive:true});
 function stabUpdate(){
   const tx=Math.max(-0.06,Math.min(0.06,-accX*0.012));
@@ -340,6 +363,8 @@ setInterval(stabUpdate,33);
 
 // ---------- start / stop ----------
 async function startCamera(){
+  // permission capteurs EN PREMIER (contexte de geste utilisateur)
+  requestMotionPermission();
   if (recording) stopRecording();
   if (stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; await new Promise(r=>setTimeout(r,200)); }
   const [w,h]=document.getElementById('resSelect').value.split('x').map(Number);
@@ -385,7 +410,6 @@ async function startCamera(){
   // zoom natif si dispo
   if (capabilities.zoom){ window._hwZoom=true; window._hwMax=capabilities.zoom.max||1; } else { window._hwZoom=false; }
   updatePreviewTransform();
-  requestMotionPermission();
 }
 function waitPlaying(ms){
   return new Promise(res=>{
@@ -425,10 +449,10 @@ function updatePreviewTransform(){
   let dig = selectedZoom / Math.max(1, hw);
   if (!isFinite(dig) || dig<0.3) dig=1;
   if (dig>40) dig=40;
-  const rot = horizonOn ? Math.max(-45, Math.min(45, horizonAngle)) : 0;
-  if (rot !== 0){
+  const rot = horizonOn ? horizonAngle : 0;
+  if (Math.abs(rot) > 0.3){
     const c = Math.abs(Math.cos(rot*Math.PI/180));
-    const cover = c>0.01 ? 1/c : 1;
+    const cover = (c>0.05 && c<0.99) ? Math.min(2.0, 1/c) : 1;
     parts.push('rotate('+(-rot)+'deg)');
     parts.push('scale('+(dig*cover)+')');
   } else {
@@ -558,21 +582,26 @@ function drawScaledProgressive(ctx,src,sx,sy,sw,sh,dx,dy,dw,dh){
   while(dw>cw*2 || dh>ch*2){ const nw=Math.min(cw*2,dw),nh=Math.min(ch*2,dh); const nc=document.createElement('canvas'); nc.width=nw; nc.height=nh; const nctx=nc.getContext('2d',{alpha:false}); nctx.imageSmoothingEnabled=true; nctx.imageSmoothingQuality='high'; nctx.drawImage(cur,0,0,cw,ch,0,0,nw,nh); cur=nc; cw=nw; ch=nh; }
   ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality='high'; ctx.drawImage(cur,0,0,cw,ch,dx,dy,dw,dh);
 }
-function coverK(W,H,deg){ const th=deg*Math.PI/180,c=Math.abs(Math.cos(th)),s=Math.abs(Math.sin(th)); const Wb=W*c+H*s,Hb=W*s+H*c; return Math.max(W/Wb,H/Hb); }
+function coverK(W,H,deg){ const th=deg*Math.PI/180,c=Math.abs(Math.cos(th)),s=Math.abs(Math.sin(th)); const Wb=W*c+H*s,Hb=W*s+H*c; return Math.min(2.0,Math.max(W/Wb,H/Hb)); }
 
 async function capturePhoto(){
   if(!stream){ toast('Activez la caméra'); return; }
   toast('Capture…');
   const enhance=document.getElementById('enhanceSelect').value;
-  const format=document.getElementById('photoFormat').value;
+  const mpSel=document.getElementById('photoMpSelect').value;
+  const format = (mpSel==='48raw') ? 'image/png' : document.getElementById('photoFormat').value;
   const quality=+document.getElementById('quality').value;
   const fAperture=+document.getElementById('aperture').value;
   const base=await averageFrames(enhance==='max'||selectedZoom>5?5:3);
   const videoW=base.width, videoH=base.height;
   const A=Math.min(2.4,Math.max(0.42,(stage.clientWidth||9)/(stage.clientHeight||19.5)));
-  const outH=Math.round(videoH);
+  const mpSel2=document.getElementById('photoMpSelect').value;
+  const targetPx = mpSel2==='48raw'||mpSel2==='48' ? 48000000 : (mpSel2==='24' ? 24000000 : 12000000);
+  let outH=Math.round(Math.sqrt(targetPx/A));
   let outW=Math.round(outH*A);
-  if(outW>videoW) outW=videoW;
+  const maxW=videoW*4, maxH=videoH*4;
+  if(outW>maxW){ outW=maxW; outH=Math.round(outW/A); }
+  if(outH>maxH){ outH=maxH; outW=Math.round(outH*A); }
   const canvas=document.createElement('canvas'); canvas.width=outW; canvas.height=outH;
   const ctx=canvas.getContext('2d',{alpha:false});
   const cropZ=Math.max(1,selectedZoom);
@@ -625,7 +654,7 @@ function drawVideoFrame(){
   ctx.save(); ctx.translate(outW/2,outH/2);
   if(needRot) ctx.rotate((-horizonAngle)*Math.PI/180);
   if(facing==='user') ctx.scale(-1,1);
-  ctx.filter='contrast(1.06) saturate(1.12)';
+  ctx.filter='contrast(1.08) saturate(1.18) brightness(1.02)';
   ctx.drawImage(video,cropX,cropY,cw,ch,-outW/2,-outH/2,outW,outH);
   ctx.filter='none'; ctx.restore();
   return true;
@@ -806,7 +835,7 @@ document.getElementById('ctrlSheet').addEventListener('click', e=>{ if(e.target=
 const stabTile=document.getElementById('cStab'); stabTile.classList.toggle('active',stabOn);
 stabTile.addEventListener('click', ()=>{ stabOn=!stabOn; stabTile.classList.toggle('active',stabOn); toast('Stabilisation '+(stabOn?'activée':'désactivée')); });
 const horizonTile=document.getElementById('cHorizon'); horizonTile.classList.toggle('active',horizonOn);
-horizonTile.addEventListener('click', ()=>{ horizonOn=!horizonOn; horizonTile.classList.toggle('active',horizonOn); toast('Horizon lock '+(horizonOn?'actif':'inactif')); });
+horizonTile.addEventListener('click', async ()=>{ horizonOn=!horizonOn; horizonTile.classList.toggle('active',horizonOn); if(horizonOn) await requestMotionPermission(); toast('Horizon lock '+(horizonOn?'actif':'inactif')); });
 const gridTile=document.getElementById('cGrid');
 gridTile.addEventListener('click', ()=>{ const on=!gridOverlay.classList.contains('show'); gridOverlay.classList.toggle('show',on); gridTile.classList.toggle('active',on); });
 const rawTile=document.getElementById('cRaw');
@@ -815,6 +844,75 @@ document.getElementById('cExpo').addEventListener('click', ()=>document.getEleme
 document.getElementById('cAper').addEventListener('click', ()=>document.getElementById('aperture').scrollIntoView({behavior:'smooth',block:'center'}));
 document.getElementById('cFps').addEventListener('click', ()=>document.getElementById('fpsSelect').scrollIntoView({behavior:'smooth',block:'center'}));
 document.getElementById('cLens').addEventListener('click', ()=>toast('Zoom automatique selon la focale'));
+
+// ---------- accès rapide (barre Apple transparente) ----------
+// (remplacé par le menu sur mesure ci-dessous)
+
+// ---------- accès rapide : menu sur mesure selon le mode ----------
+const qMenuBtn=document.getElementById('qMenuBtn');
+const qPopover=document.getElementById('qPopover');
+function renderPopover(){
+  const isVideo = mode==='video';
+  qPopover.innerHTML='';
+  if(isVideo){
+    qPopover.innerHTML += '<h5>Qualité vidéo</h5><div class="qRow" id="qResRow"></div>';
+    const resRow=qPopover.querySelector('#qResRow');
+    [['3840x2160','4K'],['1920x1080','Full HD'],['1280x720','HD'],['640x480','720']].forEach(([v,l])=>{
+      const b=document.createElement('button'); b.className='qOpt'; b.textContent=l;
+      b.classList.toggle('active', document.getElementById('resSelect').value===v);
+      b.addEventListener('click', ()=>{ document.getElementById('resSelect').value=v; resRow.querySelectorAll('.qOpt').forEach(x=>x.classList.remove('active')); b.classList.add('active'); if(stream) startCamera(); toast('Qualité '+l); });
+      resRow.appendChild(b);
+    });
+    qPopover.innerHTML += '<h5>Cadence</h5><div class="qRow" id="qFpsRow"></div>';
+    const fpsRow=qPopover.querySelector('#qFpsRow');
+    ['24','30'].forEach(v=>{
+      const b=document.createElement('button'); b.className='qOpt'; b.textContent=v+' fps';
+      b.classList.toggle('active', document.getElementById('fpsSelect').value===v);
+      b.addEventListener('click', ()=>{ document.getElementById('fpsSelect').value=v; fpsRow.querySelectorAll('.qOpt').forEach(x=>x.classList.remove('active')); b.classList.add('active'); if(stream) startCamera(); toast('Cadence '+v+' fps'); });
+      fpsRow.appendChild(b);
+    });
+  } else {
+    qPopover.innerHTML += '<h5>Mégapixels</h5><div class="qRow" id="qMpRow"></div>';
+    const mpRow=qPopover.querySelector('#qMpRow');
+    [['12','12 MP'],['24','24 MP'],['48','48 MP'],['48raw','48+ RAW']].forEach(([v,l])=>{
+      const b=document.createElement('button'); b.className='qOpt'; b.textContent=l;
+      b.classList.toggle('active', document.getElementById('photoMpSelect').value===v);
+      b.addEventListener('click', ()=>{ document.getElementById('photoMpSelect').value=v; mpRow.querySelectorAll('.qOpt').forEach(x=>x.classList.remove('active')); b.classList.add('active'); toast('Photo '+l); });
+      mpRow.appendChild(b);
+    });
+    qPopover.innerHTML += '<h5>Amélioration</h5><div class="qRow" id="qEnhRow"></div>';
+    const enhRow=qPopover.querySelector('#qEnhRow');
+    [['auto','Auto'],['max','Max IA'],['off','Off']].forEach(([v,l])=>{
+      const b=document.createElement('button'); b.className='qOpt small'; b.textContent=l;
+      b.classList.toggle('active', document.getElementById('enhanceSelect').value===v);
+      b.addEventListener('click', ()=>{ document.getElementById('enhanceSelect').value=v; enhRow.querySelectorAll('.qOpt').forEach(x=>x.classList.remove('active')); b.classList.add('active'); toast('Qualité '+(v==='max'?'MAX':(v==='auto'?'AUTO':'OFF'))); });
+      enhRow.appendChild(b);
+    });
+  }
+  qPopover.innerHTML += '<h5>Ouverture</h5><div class="qRow" id="qAperRow"></div>';
+  const aperRow=qPopover.querySelector('#qAperRow');
+  [1.8,2.2,3.4,4.4,6.6].forEach(v=>{
+    const b=document.createElement('button'); b.className='qOpt small'; b.textContent='f/'+v;
+    b.classList.toggle('active', parseFloat(document.getElementById('aperture').value)===v);
+    b.addEventListener('click', ()=>{ document.getElementById('aperture').value=v; document.getElementById('apertureVal').textContent='f/'+v.toFixed(1); aperRow.querySelectorAll('.qOpt').forEach(x=>x.classList.remove('active')); b.classList.add('active'); });
+    aperRow.appendChild(b);
+  });
+  qPopover.innerHTML += '<h5>Horizon lock</h5><div class="qRow" id="qHorRow"></div>';
+  const horRow=qPopover.querySelector('#qHorRow');
+  const hb=document.createElement('button'); hb.className='qOpt'; hb.textContent=horizonOn?'Activé':'Désactivé';
+  hb.classList.toggle('active',horizonOn);
+  hb.addEventListener('click', async ()=>{ horizonOn=!horizonOn; if(horizonOn) await requestMotionPermission(); hb.textContent=horizonOn?'Activé':'Désactivé'; hb.classList.toggle('active',horizonOn); updatePreviewTransform(); toast('Horizon lock '+(horizonOn?'actif':'inactif')); });
+  horRow.appendChild(hb);
+  const sb=document.createElement('button'); sb.className='qOpt'; sb.textContent=stabOn?'Stab. ON':'Stab. OFF';
+  sb.classList.toggle('active',stabOn);
+  sb.addEventListener('click', ()=>{ stabOn=!stabOn; sb.textContent=stabOn?'Stab. ON':'Stab. OFF'; sb.classList.toggle('active',stabOn); toast('Stabilisation '+(stabOn?'activée':'désactivée')); });
+  horRow.appendChild(sb);
+}
+qMenuBtn.addEventListener('click', ()=>{ renderPopover(); qPopover.classList.toggle('show'); });
+document.addEventListener('click', e=>{ if(!qPopover.contains(e.target) && e.target!==qMenuBtn) qPopover.classList.remove('show'); });
+// re-render popover when mode changes
+const _origModeClick = document.querySelectorAll('.modeText');
+document.querySelectorAll('.modeText').forEach(b=>b.addEventListener('click', ()=>{ setTimeout(()=>{ if(qPopover.classList.contains('show')) renderPopover(); },50); }));
 
 window.addEventListener('resize', updatePreviewTransform);
 updatePreviewTransform();

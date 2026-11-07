@@ -24,6 +24,7 @@
   #app { position:absolute; inset:0; display:flex; flex-direction:column; }
 
   #stage { position:relative; flex:1 1 auto; min-height:0; background:#000; overflow:hidden; }
+  #wbOverlay { position:absolute; inset:0; pointer-events:none; z-index:2; mix-blend-mode:normal; opacity:0; transition:opacity .2s; }
   #previewWrap { position:absolute; inset:0; overflow:hidden; }
   #video { width:100%; height:100%; object-fit:cover; transform-origin:center center; transition:transform .12s ease-out; }
   #gridOverlay { position:absolute; inset:0; opacity:0; transition:opacity .2s; pointer-events:none; }
@@ -122,6 +123,30 @@
   .flash { position:fixed; inset:0; background:#fff; opacity:0; pointer-events:none; z-index:70; transition:opacity .3s; }
   .toast { position:fixed; bottom:130px; left:50%; transform:translateX(-50%); background:rgba(30,30,35,.85); backdrop-filter:blur(20px); color:#fff; padding:11px 17px; border-radius:18px; border:1px solid var(--stroke); opacity:0; transition:opacity .2s; pointer-events:none; z-index:80; font-size:13px; font-weight:600; white-space:nowrap; max-width:90vw; text-align:center; }
   .toast.show { opacity:1; }
+
+  /* ---- Repère de zoom (minimap) ---- */
+  #zoomMap { position:absolute; top:calc(max(8px,env(safe-area-inset-top)) + 96px); right:12px; width:74px; height:148px; border-radius:14px; overflow:hidden; border:1.5px solid rgba(255,255,255,.5); background:#000; z-index:12; box-shadow:0 6px 20px rgba(0,0,0,.5); }
+  #zoomMapCanvas { width:100%; height:100%; display:block; opacity:.62; }
+  #zoomMapBox { position:absolute; border:2px solid var(--yellow); box-shadow:0 0 0 999px rgba(0,0,0,.32); pointer-events:none; }
+  #zoomMapLabel { position:absolute; bottom:3px; right:5px; font-size:9px; font-weight:800; color:var(--yellow); text-shadow:0 1px 2px #000; }
+
+  /* ---- Réticule tap-to-focus ---- */
+  #focusReticle { position:absolute; width:72px; height:72px; border:2px solid var(--yellow); border-radius:6px; z-index:14; pointer-events:none; opacity:0; transform:scale(1.4); transition:opacity .18s, transform .18s; }
+  #focusReticle.show { opacity:1; transform:scale(1); }
+  #focusReticle::before,#focusReticle::after { content:''; position:absolute; background:var(--yellow); }
+  #focusReticle::before { top:50%; left:-6px; right:-6px; height:1px; transform:translateY(-.5px); }
+  #focusReticle::after { left:50%; top:-6px; bottom:-6px; width:1px; transform:translateX(-.5px); }
+
+  /* ---- Barre widgets ---- */
+  .widgetBar { position:absolute; top:calc(max(8px,env(safe-area-inset-top)) + 52px); left:0; right:0; display:flex; gap:7px; padding:6px 12px; overflow-x:auto; z-index:11; scrollbar-width:none; -webkit-overflow-scrolling:touch; }
+  .widgetBar::-webkit-scrollbar { display:none; }
+  .wChip { flex:0 0 auto; background:rgba(20,20,24,.5); backdrop-filter:blur(20px) saturate(180%); border:1px solid rgba(255,255,255,.14); color:#fff; font-size:11px; font-weight:700; padding:7px 13px; border-radius:15px; cursor:pointer; letter-spacing:.3px; white-space:nowrap; }
+  .wChip.active { background:var(--yellow); color:#000; border-color:var(--yellow); }
+
+  /* ---- Balance des blancs ---- */
+  .wbPanel { position:absolute; top:calc(max(8px,env(safe-area-inset-top)) + 96px); left:12px; right:12px; background:rgba(20,20,24,.72); backdrop-filter:blur(28px) saturate(180%); border:1px solid rgba(255,255,255,.14); border-radius:18px; padding:12px 16px; z-index:13; }
+  .wbPanel label { display:flex; justify-content:space-between; font-size:11px; font-weight:700; color:#fff; letter-spacing:.4px; margin-bottom:8px; }
+  .wbPanel input[type=range] { width:100%; }
 </style>
 </head>
 <body>
@@ -129,8 +154,37 @@
 <div id="app">
   <div id="stage">
     <div id="previewWrap"><video id="video" autoplay playsinline muted></video></div>
+    <div id="wbOverlay"></div>
     <div id="gridOverlay"><span class="v1"></span><span class="v2"></span><span class="h1"></span><span class="h2"></span></div>
     <div id="level"><div class="line"><div class="dot" id="levelDot"></div></div></div>
+
+    <!-- Repère de zoom (fenêtre 1x + carré de recadrage) -->
+    <div id="zoomMap" hidden>
+      <canvas id="zoomMapCanvas" width="160" height="320"></canvas>
+      <div id="zoomMapBox"></div>
+      <span id="zoomMapLabel">1x</span>
+    </div>
+
+    <!-- Réticule de mise au point (tap-to-focus) -->
+    <div id="focusReticle"></div>
+
+    <!-- Barre widgets pro (accès rapide optimisé) -->
+    <div class="widgetBar" id="widgetBar">
+      <button class="wChip" id="wHorizon" title="Horizon lock">Horizon</button>
+      <button class="wChip" id="wStab" title="Stabilisation">Stab</button>
+      <button class="wChip" id="wGrid" title="Grille">Grille</button>
+      <button class="wChip" id="wNight" title="Mode nuit">Nuit</button>
+      <button class="wChip" id="wFocus" title="Mise au point continue">Focus</button>
+      <button class="wChip" id="wTorch" title="Torche">Torche</button>
+      <button class="wChip" id="wWb" title="Balance des blancs">BB</button>
+    </div>
+
+    <!-- Balance des blancs (température) -->
+    <div class="wbPanel" id="wbPanel" hidden>
+      <label>Balance des blancs <span id="wbVal">5500K</span></label>
+      <input type="range" id="wbSlider" min="2500" max="10000" step="100" value="5500">
+    </div>
+
     <div class="topBar">
       <button class="iconBtn" id="startTopBtn" title="Activer la caméra">
         <svg viewBox="0 0 24 24"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
@@ -306,6 +360,7 @@ const procCtx = procCanvas.getContext('2d', { alpha:false });
 const flashEl = document.getElementById('flash');
 const toastEl = document.getElementById('toast');
 const gridOverlay = document.getElementById('gridOverlay');
+const levelEl = document.getElementById('level');
 const levelDot = document.getElementById('levelDot');
 const zoomSliderEl = document.getElementById('zoomSlider');
 const zoomSliderVal = document.getElementById('zoomSliderVal');
@@ -336,7 +391,7 @@ async function requestMotionPermission(){
   } catch(e){ toast('Autorisez le mouvement pour l\'horizon lock'); }
 }
 const ROT_CLIP=32;
-let hasGravity=false;
+let hasGravity=false, motionSeen=false;
 function applyRoll(deg){
   // déroulement continu ±180° (rotation à 360° sans saut)
   let rr=deg;
@@ -345,21 +400,33 @@ function applyRoll(deg){
   horizonAngle += (rr - horizonAngle) * 0.32;
   if(horizonAngle > 180) horizonAngle -= 360;
   if(horizonAngle < -180) horizonAngle += 360;
+  motionSeen = true;
+  // preuve visuelle : la ligne de niveau pivote avec l'horizon
+  if(levelEl){
+    levelEl.classList.add('show');
+    const line=levelEl.querySelector('.line');
+    if(line) line.style.transform='rotate('+(-horizonAngle)+'deg)';
+  }
   levelDot.style.left = (50 + Math.max(-30, Math.min(30, horizonAngle))) + '%';
   const now = Date.now();
   if(!window._lastPT || now - window._lastPT > 25){ window._lastPT = now; updatePreviewTransform(); }
 }
 // PRIMAIRE : gravité (accéléromètre). Fiable même à β≈90° (pas de gimbal comme gamma).
-// accelerationIncludingGravity pointe vers le haut (réaction) sur iOS :
-// téléphone droit → accY≈+g, accX≈0 → roulis = atan2(accX, accY) ≈ 0.
 window.addEventListener('devicemotion', e=>{
   const a = e.accelerationIncludingGravity || {};
   if(a.x == null || a.y == null) return;
   hasGravity = true;
   accX += (a.x - accX) * 0.25;
   accY += (a.y - accY) * 0.25;
+  // roulis ABSOLU = angle de la verticale monde dans le repère écran
+  // (0° = téléphone à plat/level, quel que soit l'angle de départ)
   let deg = Math.atan2(accX, accY) * 180 / Math.PI;
-  if(Math.abs(deg) < 0.9) deg = 0; // zone morte
+  // calage du biais capteur une seule fois, seulement si quasi-nul (téléphone à l'horizontale)
+  if(window._rollBias===undefined){
+    window._rollBias = (Math.abs(deg) < 6) ? deg : 0;
+  }
+  deg -= window._rollBias;
+  if(Math.abs(deg) < 0.6) deg = 0; // zone morte fine
   applyRoll(deg);
 },{passive:true});
 // SECONDAIRE : orientation (si la gravité n'arrive pas)
@@ -659,12 +726,22 @@ function applyBokeh(canvas,f){
   vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(0,0,0,0.25)');
   ctx.fillStyle=vg; ctx.fillRect(0,0,w,h);
 }
-function drawScaledProgressive(ctx,src,sx,sy,sw,sh,dx,dy,dw,dh){
+function drawScaledProgressive(ctx,src,sx,sy,sw,sh,dx,dy,dw,dh,sharp){
   if(dw<=sw*2 && dh<=sh*2){ ctx.drawImage(src,sx,sy,sw,sh,dx,dy,dw,dh); return; }
+  const doSharp = sharp!==false;
   let cur=document.createElement('canvas'); cur.width=sw; cur.height=sh;
   let cc=cur.getContext('2d',{alpha:false}); cc.imageSmoothingEnabled=true; cc.imageSmoothingQuality='high'; cc.drawImage(src,sx,sy,sw,sh,0,0,sw,sh);
   let cw=sw,ch=sh;
-  while(dw>cw*2 || dh>ch*2){ const nw=Math.min(cw*2,dw),nh=Math.min(ch*2,dh); const nc=document.createElement('canvas'); nc.width=nw; nc.height=nh; const nctx=nc.getContext('2d',{alpha:false}); nctx.imageSmoothingEnabled=true; nctx.imageSmoothingQuality='high'; nctx.drawImage(cur,0,0,cw,ch,0,0,nw,nh); cur=nc; cw=nw; ch=nh; }
+  // Grossissement progressif par pas ×2 AVEC netteté entre chaque passe
+  // (compense le flou du rééchantillonnage → bien plus de détail perçu)
+  while(dw>cw*2 || dh>ch*2){
+    const nw=Math.min(cw*2,dw),nh=Math.min(ch*2,dh);
+    const nc=document.createElement('canvas'); nc.width=nw; nc.height=nh;
+    const nctx=nc.getContext('2d',{alpha:false}); nctx.imageSmoothingEnabled=true; nctx.imageSmoothingQuality='high';
+    nctx.drawImage(cur,0,0,cw,ch,0,0,nw,nh);
+    if(doSharp && nw*nh<=30000000) sharpenCanvas(nc,0.45,1); // nettoyage à chaque étape
+    cur=nc; cw=nw; ch=nh;
+  }
   ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality='high'; ctx.drawImage(cur,0,0,cw,ch,dx,dy,dw,dh);
 }
 // Facteur pour qu'une image de W×H pivotée de `deg` remplisse encore W×H (>=1)
@@ -673,6 +750,81 @@ function coverK(W,H,deg){
   const r=H/W;
   const k=Math.max(c + r*s, s/r + c);
   return Math.min(4.0, Math.max(1, k));
+}
+
+// ---------- Super-résolution multi-images ----------
+// Fusionne N images légèrement décalées (tremblement naturel) en sous-pixels
+// pour récupérer un vrai détail au-delà de la résolution du capteur.
+function _lum(data,w,h){
+  const n=w*h, out=new Float32Array(n);
+  for(let i=0;i<n;i++){ const j=i*4; out[i]=0.299*data[j]+0.587*data[j+1]+0.114*data[j+2]; }
+  return out;
+}
+// Estime le décalage (dx,dy) de `img` par rapport à `ref` (images luminance, mêmes dims)
+function _estimateShift(ref,img,w,h){
+  // recherche entière rapide sur un bloc central réduit
+  const bw=Math.min(160,w), bh=Math.min(160,h);
+  const ox=(w-bw)>>1, oy=(h-bh)>>1;
+  const R=6; // ±6 px
+  let best=Infinity, bdx=0, bdy=0;
+  for(let dy=-R;dy<=R;dy++) for(let dx=-R;dx<=R;dx++){
+    let s=0, c=0;
+    for(let y=8;y<bh-8;y+=2){
+      const sy=oy+y+dy; if(sy<0||sy>=h) continue;
+      const rf=(oy+y)*w, im=sy*w;
+      for(let x=8;x<bw-8;x+=2){
+        const sx=ox+x+dx; if(sx<0||sx>=w) continue;
+        const d=ref[rf+ox+x]-img[im+sx]; s+=d*d; c++;
+      }
+    }
+    if(c){ s/=c; if(s<best){ best=s; bdx=dx; bdy=dy; } }
+  }
+  return {dx:bdx, dy:bdy, err:best};
+}
+// superResolve : renvoie un canvas de sortie targetW×targetH (le crop demandé est déjà appliqué)
+async function superResolve(n, cropRect, targetW, targetH){
+  const frames=[];
+  for(let i=0;i<n;i++){
+    await new Promise(r=>requestAnimationFrame(r));
+    const c=document.createElement('canvas');
+    const vw=video.videoWidth, vh=video.videoHeight;
+    c.width=vw; c.height=vh;
+    const cx=c.getContext('2d'); cx.imageSmoothingEnabled=true; cx.drawImage(video,0,0,vw,vh);
+    frames.push({canvas:c, ctx:cx});
+  }
+  const vw=frames[0].canvas.width, vh=frames[0].canvas.height;
+  const {sx,sy,sw,sh}=cropRect;
+  const ref=_lum(frames[0].ctx.getImageData(sx,sy,sw,sh).data, sw, sh);
+  // accumulateur surdimensionné ×2 (sous-pixels)
+  const S=2;
+  const accW=Math.min(4096, Math.round(sw*S)), accH=Math.min(4096, Math.round(sh*S));
+  const acc=document.createElement('canvas'); acc.width=accW; acc.height=accH;
+  const actx=acc.getContext('2d',{alpha:false});
+  const step=sw/accW;
+  let count=0;
+  for(let i=0;i<frames.length;i++){
+    const id=frames[i].ctx.getImageData(sx,sy,sw,sh);
+    let dx=0, dy=0;
+    if(i>0){
+      const lum=_lum(id.data, sw, sh);
+      const est=_estimateShift(ref,lum,sw,sh);
+      dx=est.dx; dy=est.dy;
+    }
+    // dessiner à l'échelle S avec décalage sous-pixels, en mode additive via globalAlpha moyen
+    actx.save();
+    actx.globalAlpha = 1/(i+1);
+    actx.imageSmoothingEnabled=true; actx.imageSmoothingQuality='high';
+    // source décalée → cible ×S
+    actx.drawImage(frames[i].canvas, sx-dx, sy-dy, sw, sh, 0, 0, accW, accH);
+    actx.restore();
+    count++;
+  }
+  // redimensionner vers la cible finale avec netteté
+  const out=document.createElement('canvas'); out.width=targetW; out.height=targetH;
+  const octx=out.getContext('2d',{alpha:false}); octx.imageSmoothingEnabled=true; octx.imageSmoothingQuality='high';
+  octx.drawImage(acc,0,0,accW,accH,0,0,targetW,targetH);
+  if(targetW*targetH<=30000000) sharpenCanvas(out,0.5,1);
+  return out;
 }
 
 async function capturePhoto(){
@@ -705,11 +857,23 @@ async function capturePhoto(){
   if(stabOn){ cropX+=stabX*videoW; cropY+=stabY*videoH; }
   cropX=Math.max(0,Math.min(videoW-cropW,cropX));
   cropY=Math.max(0,Math.min(videoH-cropH,cropY));
-  const raw=document.createElement('canvas'); raw.width=Math.round(cropW); raw.height=Math.round(cropH);
-  const rctx=raw.getContext('2d',{alpha:false}); rctx.imageSmoothingEnabled=true; rctx.imageSmoothingQuality='high';
-  rctx.drawImage(base,cropX,cropY,cropW,cropH,0,0,raw.width,raw.height);
+  cropX=Math.round(cropX); cropY=Math.round(cropY);
+  cropW=Math.max(2,Math.round(cropW)); cropH=Math.max(2,Math.round(cropH));
+
+  const raw=document.createElement('canvas');
+  let enhLvl0 = enhance==='off' ? 0 : (enhance==='max' ? 2 : 1);
+  const useSR = selectedZoom>=4; // super-résolution au-delà de 4x
+  if(useSR){
+    // Super-résolution : N images alignées en sous-pixels → vrai détail
+    const sr=await superResolve(nightMode?14:(selectedZoom>10?11:8), {sx:cropX,sy:cropY,sw:cropW,sh:cropH}, cropW, cropH);
+    raw.width=sr.width; raw.height=sr.height;
+    raw.getContext('2d',{alpha:false}).drawImage(sr,0,0);
+  } else {
+    raw.width=cropW; raw.height=cropH;
+    const rctx=raw.getContext('2d',{alpha:false}); rctx.imageSmoothingEnabled=true; rctx.imageSmoothingQuality='high';
+    rctx.drawImage(base,cropX,cropY,cropW,cropH,0,0,raw.width,raw.height);
+  }
   // détail extrait AVANT agrandissement (le grossisseur préserve les bords)
-  const enhLvl0 = enhance==='off' ? 0 : (enhance==='max' ? 2 : 1);
   if(enhLvl0>0 && raw.width*raw.height<=40000000) aiEnhance(raw, enhLvl0);
   ctx.save(); ctx.translate(outW/2,outH/2);
   if(needRot) ctx.rotate((-horizonAngle)*Math.PI/180);
@@ -945,92 +1109,152 @@ document.getElementById('cAper').addEventListener('click', ()=>document.getEleme
 document.getElementById('cFps').addEventListener('click', ()=>document.getElementById('fpsSelect').scrollIntoView({behavior:'smooth',block:'center'}));
 document.getElementById('cLens').addEventListener('click', ()=>toast('Zoom automatique selon la focale'));
 
-// ---------- accès rapide (barre Apple transparente) ----------
-// (remplacé par le menu sur mesure ci-dessous)
-
-// ---------- accès rapide : menu sur mesure selon le mode ----------
+// ---------- accès rapide : menu sur mesure selon le mode (event delegation) ----------
 const qMenuBtn=document.getElementById('qMenuBtn');
 const qPopover=document.getElementById('qPopover');
-function renderPopover(){
-  const isVideo = mode==='video';
-  // Build full HTML first (avoid innerHTML += destroying listeners)
-  let html='';
-  if(isVideo){
-    html += '<h5>Qualité vidéo</h5><div class="qRow" id="qResRow"></div>';
-    html += '<h5>Cadence</h5><div class="qRow" id="qFpsRow"></div>';
-  } else {
-    html += '<h5>Mégapixels</h5><div class="qRow" id="qMpRow"></div>';
-    html += '<h5>Amélioration</h5><div class="qRow" id="qEnhRow"></div>';
-    html += '<h5>Mode nuit</h5><div class="qRow" id="qNightRow"></div>';
-  }
-  html += '<h5>Ouverture</h5><div class="qRow" id="qAperRow"></div>';
-  html += '<h5>Horizon lock</h5><div class="qRow" id="qHorRow"></div>';
-  qPopover.innerHTML = html;
-  // Now attach listeners (after single innerHTML set)
-  if(isVideo){
-    const resRow=qPopover.querySelector('#qResRow');
-    [['3840x2160','4K'],['1920x1080','Full HD'],['1280x720','HD'],['640x480','720']].forEach(([v,l])=>{
-      const b=document.createElement('button'); b.className='qOpt'; b.textContent=l;
-      b.classList.toggle('active', document.getElementById('resSelect').value===v);
-      b.addEventListener('click', ()=>{ document.getElementById('resSelect').value=v; resRow.querySelectorAll('.qOpt').forEach(x=>x.classList.remove('active')); b.classList.add('active'); if(stream) startCamera(); toast('Qualité '+l); });
-      resRow.appendChild(b);
-    });
-    const fpsRow=qPopover.querySelector('#qFpsRow');
-    ['24','30'].forEach(v=>{
-      const b=document.createElement('button'); b.className='qOpt'; b.textContent=v+' fps';
-      b.classList.toggle('active', document.getElementById('fpsSelect').value===v);
-      b.addEventListener('click', ()=>{ document.getElementById('fpsSelect').value=v; fpsRow.querySelectorAll('.qOpt').forEach(x=>x.classList.remove('active')); b.classList.add('active'); if(stream) startCamera(); toast('Cadence '+v+' fps'); });
-      fpsRow.appendChild(b);
-    });
-  } else {
-    const mpRow=qPopover.querySelector('#qMpRow');
-    [['12','12 MP'],['24','24 MP'],['48','48 MP'],['48raw','48+ RAW']].forEach(([v,l])=>{
-      const b=document.createElement('button'); b.className='qOpt'; b.textContent=l;
-      b.classList.toggle('active', document.getElementById('photoMpSelect').value===v);
-      b.addEventListener('click', ()=>{ document.getElementById('photoMpSelect').value=v; mpRow.querySelectorAll('.qOpt').forEach(x=>x.classList.remove('active')); b.classList.add('active'); toast('Photo '+l); });
-      mpRow.appendChild(b);
-    });
-    const enhRow=qPopover.querySelector('#qEnhRow');
-    [['auto','Auto'],['max','Max IA'],['off','Off']].forEach(([v,l])=>{
-      const b=document.createElement('button'); b.className='qOpt small'; b.textContent=l;
-      b.classList.toggle('active', document.getElementById('enhanceSelect').value===v);
-      b.addEventListener('click', ()=>{ document.getElementById('enhanceSelect').value=v; enhRow.querySelectorAll('.qOpt').forEach(x=>x.classList.remove('active')); b.classList.add('active'); toast('Qualité '+(v==='max'?'MAX':(v==='auto'?'AUTO':'OFF'))); });
-      enhRow.appendChild(b);
-    });
-    const nightRow=qPopover.querySelector('#qNightRow');
-    ['off','on'].forEach(v=>{
-      const b=document.createElement('button'); b.className='qOpt'; b.textContent=v==='on'?'Nuit ON':'Nuit OFF';
-      b.classList.toggle('active', document.getElementById('nightSelect').value===v);
-      b.addEventListener('click', ()=>{ document.getElementById('nightSelect').value=v; nightRow.querySelectorAll('.qOpt').forEach(x=>x.classList.remove('active')); b.classList.add('active'); toast('Mode nuit '+(v==='on'?'activé':'désactivé')); });
-      nightRow.appendChild(b);
-    });
-  }
-  const aperRow=qPopover.querySelector('#qAperRow');
-  [1.8,2.2,3.4,4.4,6.6].forEach(v=>{
-    const b=document.createElement('button'); b.className='qOpt small'; b.textContent='f/'+v;
-    b.classList.toggle('active', parseFloat(document.getElementById('aperture').value)===v);
-    b.addEventListener('click', ()=>{ document.getElementById('aperture').value=v; document.getElementById('apertureVal').textContent='f/'+v.toFixed(1); aperRow.querySelectorAll('.qOpt').forEach(x=>x.classList.remove('active')); b.classList.add('active'); });
-    aperRow.appendChild(b);
-  });
-  const horRow=qPopover.querySelector('#qHorRow');
-  const hb=document.createElement('button'); hb.className='qOpt'; hb.textContent=horizonOn?'Activé':'Désactivé';
-  hb.classList.toggle('active',horizonOn);
-  hb.addEventListener('click', async ()=>{ horizonOn=!horizonOn; if(horizonOn) await requestMotionPermission(); hb.textContent=horizonOn?'Activé':'Désactivé'; hb.classList.toggle('active',horizonOn); updatePreviewTransform(); toast('Horizon lock '+(horizonOn?'actif':'inactif')); });
-  horRow.appendChild(hb);
-  const sb=document.createElement('button'); sb.className='qOpt'; sb.textContent=stabOn?'Stab. ON':'Stab. OFF';
-  sb.classList.toggle('active',stabOn);
-  sb.addEventListener('click', ()=>{ stabOn=!stabOn; sb.textContent=stabOn?'Stab. ON':'Stab. OFF'; sb.classList.toggle('active',stabOn); toast('Stabilisation '+(stabOn?'activée':'désactivée')); });
-  horRow.appendChild(sb);
+
+function optHTML(items, current){
+  return items.map(([v,l])=>`<button class="qOpt${String(v)===String(current)?' active':''}" data-v="${v}">${l}</button>`).join('');
 }
-qMenuBtn.addEventListener('click', ()=>{ renderPopover(); qPopover.classList.toggle('show'); });
+function renderPopover(){
+  let html='';
+  if(mode==='video'){
+    html+='<h5>Qualité vidéo</h5><div class="qRow" data-grp="res">'+optHTML([['3840x2160','4K'],['1920x1080','Full HD'],['1280x720','HD'],['640x480','720']], document.getElementById('resSelect').value)+'</div>';
+    html+='<h5>Cadence</h5><div class="qRow" data-grp="fps">'+optHTML([['24','24 fps'],['30','30 fps']], document.getElementById('fpsSelect').value)+'</div>';
+  } else {
+    html+='<h5>Mégapixels</h5><div class="qRow" data-grp="mp">'+optHTML([['12','12 MP'],['24','24 MP'],['48','48 MP'],['48raw','48+ RAW']], document.getElementById('photoMpSelect').value)+'</div>';
+    html+='<h5>Amélioration</h5><div class="qRow" data-grp="enh">'+optHTML([['auto','Auto'],['max','Max IA'],['off','Off']], document.getElementById('enhanceSelect').value)+'</div>';
+    html+='<h5>Mode nuit</h5><div class="qRow" data-grp="night">'+optHTML([['off','Nuit OFF'],['on','Nuit ON']], document.getElementById('nightSelect').value)+'</div>';
+  }
+  html+='<h5>Ouverture</h5><div class="qRow" data-grp="aper">'+optHTML([[1.8,'f/1.8'],[2.2,'f/2.2'],[3.4,'f/3.4'],[4.4,'f/4.4'],[6.6,'f/6.6']], document.getElementById('aperture').value)+'</div>';
+  html+='<h5>Horizon lock</h5><div class="qRow" data-grp="hor">'+optHTML([['on',horizonOn?'Activé ✓':'Désactivé'],['off','']], horizonOn?'on':'off')+'</div>';
+  html+='<h5>Stabilisation</h5><div class="qRow" data-grp="stab">'+optHTML([['on',stabOn?'ON ✓':'OFF']], stabOn?'on':'off')+'</div>';
+  html+='<h5>Balance des blancs</h5><div class="qRow" data-grp="wb">'+optHTML([['auto','Auto'],['2800','Tungst.'],['5500','Nuit blanche'],['6500','Daylight'],['7500','Nuageux']], String(window._wbK||5500))+'</div>';
+  qPopover.innerHTML=html;
+}
+qPopover.addEventListener('click', e=>{
+  const b=e.target.closest('.qOpt'); if(!b) return;
+  const grp=b.parentElement.dataset.grp, v=b.dataset.v;
+  b.parentElement.querySelectorAll('.qOpt').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active');
+  const needCam=()=>{ if(stream) startCamera(); };
+  switch(grp){
+    case 'res': document.getElementById('resSelect').value=v; needCam(); toast('Qualité '+b.textContent); break;
+    case 'fps': document.getElementById('fpsSelect').value=v; needCam(); toast('Cadence '+v+' fps'); break;
+    case 'mp': document.getElementById('photoMpSelect').value=v; toast('Photo '+b.textContent); break;
+    case 'enh': document.getElementById('enhanceSelect').value=v; toast('Amélioration '+(v==='max'?'Max IA':(v==='auto'?'Auto':'Off'))); break;
+    case 'night': document.getElementById('nightSelect').value=v; nightMode=(v==='on'); toast('Mode nuit '+(v==='on'?'activé':'désactivé')); break;
+    case 'aper': document.getElementById('aperture').value=v; document.getElementById('apertureVal').textContent='f/'+(+v).toFixed(1); toast('Ouverture f/'+(+v).toFixed(1)); break;
+    case 'hor': horizonOn=!horizonOn; if(horizonOn) requestMotionPermission(); updatePreviewTransform(); renderPopover(); syncWidgets(); toast('Horizon lock '+(horizonOn?'actif':'inactif')); break;
+    case 'stab': stabOn=!stabOn; renderPopover(); syncWidgets(); toast('Stabilisation '+(stabOn?'activée':'désactivée')); break;
+    case 'wb': setWB(v==='auto'?null:+v); renderPopover(); toast('Balance des blancs '+(v==='auto'?'auto':v+'K')); break;
+  }
+});
+qMenuBtn.addEventListener('click', e=>{ e.stopPropagation(); renderPopover(); qPopover.classList.toggle('show'); });
 document.addEventListener('click', e=>{ if(!qPopover.contains(e.target) && e.target!==qMenuBtn) qPopover.classList.remove('show'); });
-// re-render popover when mode changes
-const _origModeClick = document.querySelectorAll('.modeText');
-document.querySelectorAll('.modeText').forEach(b=>b.addEventListener('click', ()=>{ setTimeout(()=>{ if(qPopover.classList.contains('show')) renderPopover(); },50); }));
+document.querySelectorAll('.modeText').forEach(b=>b.addEventListener('click', ()=>{ if(qPopover.classList.contains('show')) renderPopover(); }));
+
+// ---------- barre widgets pro ----------
+const wHorizon=document.getElementById('wHorizon'), wStab=document.getElementById('wStab'),
+      wGrid=document.getElementById('wGrid'), wNight=document.getElementById('wNight'),
+      wFocus=document.getElementById('wFocus'), wTorch=document.getElementById('wTorch'),
+      wWb=document.getElementById('wWb');
+let focusMode=true;
+function syncWidgets(){
+  wHorizon.classList.toggle('active',horizonOn);
+  wStab.classList.toggle('active',stabOn);
+  wGrid.classList.toggle('active',gridOverlay.classList.contains('show'));
+  wNight.classList.toggle('active',document.getElementById('nightSelect').value==='on');
+  wFocus.classList.toggle('active',focusMode);
+  wTorch.classList.toggle('active',torchOn);
+  wWb.classList.toggle('active', !!window._wbK);
+}
+wHorizon.addEventListener('click', async ()=>{ horizonOn=!horizonOn; if(horizonOn) await requestMotionPermission(); updatePreviewTransform(); syncWidgets(); toast('Horizon lock '+(horizonOn?'actif':'inactif')); });
+wStab.addEventListener('click', ()=>{ stabOn=!stabOn; syncWidgets(); toast('Stabilisation '+(stabOn?'activée':'désactivée')); });
+wGrid.addEventListener('click', ()=>{ const on=!gridOverlay.classList.contains('show'); gridOverlay.classList.toggle('show',on); syncWidgets(); });
+wNight.addEventListener('click', ()=>{ const sel=document.getElementById('nightSelect'); const on=sel.value!=='on'; sel.value=on?'on':'off'; nightMode=on; syncWidgets(); toast('Mode nuit '+(on?'activé (longue pose)':'désactivé')); });
+wFocus.addEventListener('click', async ()=>{ focusMode=!focusMode; syncWidgets(); try{ await stream?.getVideoTracks()[0].applyConstraints({advanced:[{focusMode: focusMode?'continuous':'manual'}]}); }catch(e){} toast('Focus '+(focusMode?'continu':'manuel')); });
+wTorch.addEventListener('click', async ()=>{ const on=!torchOn; const ok=await toggleTorch(on); torchBtn.classList.toggle('active',ok&&on); syncWidgets(); });
+wWb.addEventListener('click', ()=>{ const p=document.getElementById('wbPanel'); p.hidden=!p.hidden; });
+
+// ---------- balance des blancs (température de couleur) ----------
+const wbOverlay=document.getElementById('wbOverlay');
+const wbSlider=document.getElementById('wbSlider');
+const wbVal=document.getElementById('wbVal');
+function setWB(k){
+  window._wbK=k;
+  if(!k){ wbOverlay.style.opacity=0; wbOverlay.style.background='transparent'; wbVal.textContent='Auto'; syncWidgets(); return; }
+  // 2500K chaud (orange) → 10000K froid (bleu). On applique la teinte inverse pour équilibrer.
+  const t=(k-5500)/4500; // -0.57 chaud .. +1 froid
+  let r,g,b;
+  if(t<0){ const a=-t; r=Math.round(255*a*0.5); g=Math.round(90*a); b=0; }
+  else { const a=t; r=0; g=Math.round(60*a); b=Math.round(255*a*0.5); }
+  wbOverlay.style.background=`rgb(${r},${g},${b})`;
+  wbOverlay.style.opacity=Math.min(0.4,0.12+Math.abs(t)*0.28);
+  wbVal.textContent=k+'K';
+  syncWidgets();
+}
+wbSlider.addEventListener('input', e=>setWB(+e.target.value));
+
+// ---------- tap-to-focus (réticule) ----------
+const focusReticle=document.getElementById('focusReticle');
+stage.addEventListener('click', e=>{
+  if(!stream) return;
+  const rect=stage.getBoundingClientRect();
+  const x=e.clientX-rect.left, y=e.clientY-rect.top;
+  focusReticle.style.left=(x-36)+'px'; focusReticle.style.top=(y-36)+'px';
+  focusReticle.classList.remove('show'); void focusReticle.offsetWidth; focusReticle.classList.add('show');
+  setTimeout(()=>focusReticle.classList.remove('show'),1400);
+  try{ stream.getVideoTracks()[0].applyConstraints({advanced:[{focusMode:'continuous'}]}); }catch(err){}
+  toast('Point de mise au point');
+});
+
+// ---------- repère de zoom (fenêtre 1x + carré de recadrage) ----------
+const zoomMap=document.getElementById('zoomMap');
+const zmc=document.getElementById('zoomMapCanvas');
+const zmBox=document.getElementById('zoomMapBox');
+const zmCtx=zmc.getContext('2d',{alpha:false});
+function updateZoomMap(){
+  const show = stream && selectedZoom>=5;
+  zoomMap.hidden=!show;
+  if(!show) return;
+  if(video.videoWidth){
+    // dessiner la vue 1x complète (object-fit cover dans le repère)
+    const W=zmc.width,H=zmc.height, vw=video.videoWidth, vh=video.videoHeight;
+    const s=Math.max(W/vw,H/vh), dw=vw*s, dh=vh*s;
+    zmCtx.fillStyle='#000'; zmCtx.fillRect(0,0,W,H);
+    try{ zmCtx.drawImage(video,(W-dw)/2,(H-dh)/2,dw,dh); }catch(e){}
+  }
+  // carré = zone réellement zoomée (centrée)
+  const dig=Math.max(1, selectedZoom);
+  const frac=Math.min(1,1/dig);
+  const bw=Math.max(6, zmc.width*frac), bh=Math.max(6, zmc.height*frac);
+  zmBox.style.width=bw+'px'; zmBox.style.height=bh+'px';
+  zmBox.style.left=((zmc.width-bw)/2)+'px'; zmBox.style.top=((zmc.height-bh)/2)+'px';
+  document.getElementById('zoomMapLabel').textContent=(dig>=10?dig.toFixed(0):dig.toFixed(1))+'x';
+}
+setInterval(updateZoomMap, 120);
 
 window.addEventListener('resize', updatePreviewTransform);
+syncWidgets();
 updatePreviewTransform();
 renderGallery();
+
+// ---------- fiabilité horizon lock ----------
+// Demande la permission mouvement dès le premier toucher (contexte de geste iOS)
+function firstTouchMotion(){
+  requestMotionPermission();
+  window.removeEventListener('touchstart', firstTouchMotion);
+  window.removeEventListener('mousedown', firstTouchMotion);
+}
+window.addEventListener('touchstart', firstTouchMotion, {passive:true, once:true});
+window.addEventListener('mousedown', firstTouchMotion, {once:true});
+// Watchdog : si aucune donnée de mouvement après activation, on relance la permission
+setInterval(()=>{
+  if(horizonOn && stream && !motionSeen){
+    requestMotionPermission();
+  }
+}, 4000);
 </script>
 </body>
 </html>
